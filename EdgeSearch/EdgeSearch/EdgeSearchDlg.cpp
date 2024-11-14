@@ -53,6 +53,7 @@ END_MESSAGE_MAP()
 
 CEdgeSearchDlg::CEdgeSearchDlg(CWnd* pParent /*=nullptr*/)
 	: CDialogEx(IDD_EDGESEARCH_DIALOG, pParent)
+	, m_cvImage() // 초기화
 {
 	m_hIcon = AfxGetApp()->LoadIcon(IDR_MAINFRAME);
 }
@@ -70,48 +71,6 @@ BEGIN_MESSAGE_MAP(CEdgeSearchDlg, CDialogEx)
 	ON_BN_CLICKED(IDC_BTN_IMG_LOAD, &CEdgeSearchDlg::OnBnClickedBtnImgLoad)
 END_MESSAGE_MAP()
 
-
-// CEdgeSearchDlg 메시지 처리기
-
-void CEdgeSearchDlg::DisplayImageOnControl(const cv::Mat& img)
-{
-	// 이미 HBITMAP이 있으면 삭제
-	if (m_hBitmap)
-	{
-		DeleteObject(m_hBitmap);
-		m_hBitmap = NULL;
-	}
-
-	// 이미지 크기 조정 (Picture Control 크기에 맞게)
-	CRect rect;
-	m_pPictureCtrl->GetClientRect(&rect);
-	cv::Mat resizedImage;
-	cv::resize(img, resizedImage, cv::Size(rect.Width(), rect.Height()));
-
-	// BGR을 RGB로 변환 (OpenCV는 BGR로 이미지를 저장하므로)
-	cv::cvtColor(resizedImage, resizedImage, cv::COLOR_BGR2RGB);
-
-	// HBITMAP으로 변환
-	BITMAPINFO bitmapInfo;
-	bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-	bitmapInfo.bmiHeader.biWidth = resizedImage.cols;
-	bitmapInfo.bmiHeader.biHeight = -resizedImage.rows; // 상하 반전
-	bitmapInfo.bmiHeader.biPlanes = 1;
-	bitmapInfo.bmiHeader.biBitCount = 24;
-	bitmapInfo.bmiHeader.biCompression = BI_RGB;
-	bitmapInfo.bmiHeader.biSizeImage = 0;
-	bitmapInfo.bmiHeader.biXPelsPerMeter = 0;
-	bitmapInfo.bmiHeader.biYPelsPerMeter = 0;
-	bitmapInfo.bmiHeader.biClrUsed = 0;
-	bitmapInfo.bmiHeader.biClrImportant = 0;
-
-	HDC hdc = ::GetDC(m_pPictureCtrl->GetSafeHwnd());
-	m_hBitmap = CreateDIBitmap(hdc, &bitmapInfo.bmiHeader, CBM_INIT, resizedImage.data, &bitmapInfo, DIB_RGB_COLORS);
-	::ReleaseDC(m_pPictureCtrl->GetSafeHwnd(), hdc);
-
-	// Picture Control에 HBITMAP 설정
-	m_pPictureCtrl->SetBitmap(m_hBitmap);
-}
 
 BOOL CEdgeSearchDlg::OnInitDialog()
 {
@@ -142,8 +101,6 @@ BOOL CEdgeSearchDlg::OnInitDialog()
 	SetIcon(m_hIcon, TRUE);			// 큰 아이콘을 설정합니다.
 	SetIcon(m_hIcon, FALSE);		// 작은 아이콘을 설정합니다.
 
-	// Picture Control 포인터 설정
-	m_pPictureCtrl = (CStatic*)GetDlgItem(IDC_PC_VIEW);
 
 	return TRUE;  // 포커스를 컨트롤에 설정하지 않으면 TRUE를 반환합니다.
 }
@@ -168,20 +125,33 @@ void CEdgeSearchDlg::OnPaint()
 {
 	if (IsIconic())
 	{
-		CPaintDC dc(this);
-		SendMessage(WM_ICONERASEBKGND, reinterpret_cast<WPARAM>(dc.GetSafeHdc()), 0);
-		int cxIcon = GetSystemMetrics(SM_CXICON);
-		int cyIcon = GetSystemMetrics(SM_CYICON);
-		CRect rect;
-		GetClientRect(&rect);
-		int x = (rect.Width() - cxIcon + 1) / 2;
-		int y = (rect.Height() - cyIcon + 1) / 2;
-		dc.DrawIcon(x, y, m_hIcon);
+		CPaintDC dc(this); // 그리기 위한 DC
+
+		SendMessage(WM_ICONERASEBKGND, reinterpret_cast<WPARAM>(dc.m_ps.hdc), 0);
+		dc.DrawIcon(0, 0, m_hIcon);
 	}
 	else
 	{
-		CDialogEx::OnPaint();
+		CPaintDC dc(this); // 그리기 위한 DC
+		CRect rect;
+		GetClientRect(&rect);
+
+		// OpenCV 이미지를 MFC의 DC에 그리기
+		if (!m_cvImage.empty()) {
+			// OpenCV 이미지를 MFC DC에 출력
+			cv::Mat displayImage;
+			cv::cvtColor(m_cvImage, displayImage, cv::COLOR_GRAY2BGR);
+
+			// C++ 포인터를 통해 MFC DC에 그리기
+			CImage img;
+			img.Create(displayImage.cols, displayImage.rows, 24); // CImage 객체 생성
+			memcpy(img.GetBits(), displayImage.data, displayImage.total() * displayImage.elemSize());
+
+			img.Draw(dc.m_ps.hdc, 0, 0); // 이미지를 DC에 출력
+		}
 	}
+
+	CDialogEx::OnPaint();
 }
 
 
@@ -196,6 +166,8 @@ HCURSOR CEdgeSearchDlg::OnQueryDragIcon()
 
 void CEdgeSearchDlg::OnBnClickedBtnExit()
 {
+	m_cvImage.release(); // OpenCV 메모리 해제
+
 	DestroyWindow(); // 프로그램 종료 시 메모리 해제
 }
 
@@ -209,18 +181,50 @@ void CEdgeSearchDlg::OnBnClickedBtnImgLoad()
 		CT2CA pszConvertedAnsiString(filePath);
 		std::string imagePath(pszConvertedAnsiString);
 
-		// OpenCV로 이미지 로드
-		Mat image = imread(imagePath, IMREAD_COLOR);
+		m_cvImage.release(); // OpenCV 메모리 해제
 
-		if (!image.empty())
+		m_cvImage = cv::imread(imagePath, cv::IMREAD_UNCHANGED);
+
+
+		// 1. 클라이언트 영역에 대한 DC 생성
+		CClientDC dc(GetDlgItem(IDC_CAMERA_IMAGE));
+
+		// 2. 카메라 이미지를 표시할 컨트롤의 크기 가져오기
+		CRect rect;
+		GetDlgItem(IDC_CAMERA_IMAGE)->GetClientRect(&rect);
+
+		// 3. 이미지가 그레이스케일(1채널)인지 확인하고, 그레이스케일인 경우 3채널(BGR)로 변환
+		if (m_cvImage.channels() == 1) 
 		{
-			// OpenCV의 창에 이미지 표시
-			imshow("Loaded Image", image);
-			waitKey(0); // 키 입력을 기다림 (윈도우 창을 유지)
+			cv::cvtColor(m_cvImage, m_cvImage, cv::COLOR_GRAY2BGR);
 		}
-		else
+
+		// 4. 이미지를 4배 축소 (원본 이미지 크기를 4로 나눈 크기)
+		//Mat scaledImg;
+		//cv::resize(m_cvImage, scaledImg, Size(m_cvImage.cols/4, m_cvImage.rows));
+
+		// 5. BITMAPINFO 설정
+		BITMAPINFO bitmapInfo;
+		memset(&bitmapInfo, 0, sizeof(BITMAPINFO));
+		bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+		bitmapInfo.bmiHeader.biWidth = m_cvImage.cols;// scaledImg.cols;  // 축소된 이미지의 너비 설정
+		bitmapInfo.bmiHeader.biHeight = -m_cvImage.rows;  // 높이를 음수로 설정해 상하 반전 방지
+		bitmapInfo.bmiHeader.biPlanes = 1;
+		bitmapInfo.bmiHeader.biBitCount = 24;  // BGR 24비트
+		bitmapInfo.bmiHeader.biCompression = BI_RGB;  // 압축 사용 안 함
+
+		// 6. 이미지를 화면에 출력
+		SetStretchBltMode(dc.GetSafeHdc(), COLORONCOLOR);
+		StretchDIBits(dc.GetSafeHdc(),
+			0, 0, rect.Width(), rect.Height(),        // 출력 영역의 크기
+			0, 0, m_cvImage.cols, m_cvImage.rows,     // 축소된 이미지의 크기
+			m_cvImage.data, &bitmapInfo, DIB_RGB_COLORS, SRCCOPY);
+
+		
+		if (m_cvImage.empty()) 
 		{
-			AfxMessageBox(_T("이미지 로드에 실패했습니다."));
+			AfxMessageBox(_T("Failed Load Image"));
+			return;
 		}
 	}
 }

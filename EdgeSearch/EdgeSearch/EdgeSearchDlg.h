@@ -24,11 +24,6 @@ public:
 // 구현입니다.
 protected:
 	HICON m_hIcon;
-	cv::Mat m_image;           // OpenCV 이미지 저장용
-	CStatic* m_pPictureCtrl;   // Picture Control 멤버 변수
-	HBITMAP m_hBitmap;         // Picture Control에 사용할 비트맵
-
-	void DisplayImageOnControl(const cv::Mat& img); // 이미지를 Picture Control에 표시하는 함수
 
 	// 생성된 메시지 맵 함수
 	virtual BOOL OnInitDialog();
@@ -36,8 +31,10 @@ protected:
 	afx_msg void OnPaint();
 	afx_msg HCURSOR OnQueryDragIcon();
 	DECLARE_MESSAGE_MAP()
-public:
 	afx_msg void OnBnClickedBtnExit();
 	afx_msg void OnBnClickedBtnImgLoad();
+
+private:
+	cv::Mat m_cvImage;           // opencv 이미지 객체 (cv::mat)
 
 };
