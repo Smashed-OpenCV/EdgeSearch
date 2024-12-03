@@ -13,7 +13,6 @@
 #define new DEBUG_NEW
 #endif
 
-
 // 응용 프로그램 정보에 사용되는 CAboutDlg 대화 상자입니다.
 
 class CAboutDlg : public CDialogEx
@@ -53,9 +52,12 @@ END_MESSAGE_MAP()
 
 CEdgeSearchDlg::CEdgeSearchDlg(CWnd* pParent /*=nullptr*/)
 	: CDialogEx(IDD_EDGESEARCH_DIALOG, pParent)
-	, m_cvImage() // 초기화
 {
 	m_hIcon = AfxGetApp()->LoadIcon(IDR_MAINFRAME);
+}
+
+CEdgeSearchDlg::~CEdgeSearchDlg()
+{
 }
 
 void CEdgeSearchDlg::DoDataExchange(CDataExchange* pDX)
@@ -69,6 +71,7 @@ BEGIN_MESSAGE_MAP(CEdgeSearchDlg, CDialogEx)
 	ON_WM_QUERYDRAGICON()
 	ON_BN_CLICKED(IDC_BTN_EXIT, &CEdgeSearchDlg::OnBnClickedBtnExit)
 	ON_BN_CLICKED(IDC_BTN_IMG_LOAD, &CEdgeSearchDlg::OnBnClickedBtnImgLoad)
+	ON_WM_GETMINMAXINFO()
 END_MESSAGE_MAP()
 
 
@@ -102,6 +105,13 @@ BOOL CEdgeSearchDlg::OnInitDialog()
 	SetIcon(m_hIcon, FALSE);		// 작은 아이콘을 설정합니다.
 
 
+	// 대화 상자의 크기 설정 (좌측 상단 X, Y 좌표, 가로, 세로 크기)
+	SetWindowPos(NULL, 0, 0, 1920, 1080, SWP_NOZORDER);
+
+
+	// Picture Control 초기화
+	m_pictureControl.SubclassDlgItem(IDC_PICTURE, this);
+
 	return TRUE;  // 포커스를 컨트롤에 설정하지 않으면 TRUE를 반환합니다.
 }
 
@@ -130,26 +140,6 @@ void CEdgeSearchDlg::OnPaint()
 		SendMessage(WM_ICONERASEBKGND, reinterpret_cast<WPARAM>(dc.m_ps.hdc), 0);
 		dc.DrawIcon(0, 0, m_hIcon);
 	}
-	else
-	{
-		CPaintDC dc(this); // 그리기 위한 DC
-		CRect rect;
-		GetClientRect(&rect);
-
-		// OpenCV 이미지를 MFC의 DC에 그리기
-		if (!m_cvImage.empty()) {
-			// OpenCV 이미지를 MFC DC에 출력
-			cv::Mat displayImage;
-			cv::cvtColor(m_cvImage, displayImage, cv::COLOR_GRAY2BGR);
-
-			// C++ 포인터를 통해 MFC DC에 그리기
-			CImage img;
-			img.Create(displayImage.cols, displayImage.rows, 24); // CImage 객체 생성
-			memcpy(img.GetBits(), displayImage.data, displayImage.total() * displayImage.elemSize());
-
-			img.Draw(dc.m_ps.hdc, 0, 0); // 이미지를 DC에 출력
-		}
-	}
 
 	CDialogEx::OnPaint();
 }
@@ -166,7 +156,7 @@ HCURSOR CEdgeSearchDlg::OnQueryDragIcon()
 
 void CEdgeSearchDlg::OnBnClickedBtnExit()
 {
-	m_cvImage.release(); // OpenCV 메모리 해제
+	m_image.release(); // OpenCV 메모리 해제
 
 	DestroyWindow(); // 프로그램 종료 시 메모리 해제
 }
@@ -181,50 +171,106 @@ void CEdgeSearchDlg::OnBnClickedBtnImgLoad()
 		CT2CA pszConvertedAnsiString(filePath);
 		std::string imagePath(pszConvertedAnsiString);
 
-		m_cvImage.release(); // OpenCV 메모리 해제
-
-		m_cvImage = cv::imread(imagePath, cv::IMREAD_UNCHANGED);
-
-
-		// 1. 클라이언트 영역에 대한 DC 생성
-		CClientDC dc(GetDlgItem(IDC_CAMERA_IMAGE));
-
-		// 2. 카메라 이미지를 표시할 컨트롤의 크기 가져오기
-		CRect rect;
-		GetDlgItem(IDC_CAMERA_IMAGE)->GetClientRect(&rect);
-
-		// 3. 이미지가 그레이스케일(1채널)인지 확인하고, 그레이스케일인 경우 3채널(BGR)로 변환
-		if (m_cvImage.channels() == 1) 
+		// OpenCV로 이미지 로드
+		m_image = imread(imagePath);
+		if (m_image.empty())
 		{
-			cv::cvtColor(m_cvImage, m_cvImage, cv::COLOR_GRAY2BGR);
-		}
-
-		// 4. 이미지를 4배 축소 (원본 이미지 크기를 4로 나눈 크기)
-		//Mat scaledImg;
-		//cv::resize(m_cvImage, scaledImg, Size(m_cvImage.cols/4, m_cvImage.rows));
-
-		// 5. BITMAPINFO 설정
-		BITMAPINFO bitmapInfo;
-		memset(&bitmapInfo, 0, sizeof(BITMAPINFO));
-		bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-		bitmapInfo.bmiHeader.biWidth = m_cvImage.cols;// scaledImg.cols;  // 축소된 이미지의 너비 설정
-		bitmapInfo.bmiHeader.biHeight = -m_cvImage.rows;  // 높이를 음수로 설정해 상하 반전 방지
-		bitmapInfo.bmiHeader.biPlanes = 1;
-		bitmapInfo.bmiHeader.biBitCount = 24;  // BGR 24비트
-		bitmapInfo.bmiHeader.biCompression = BI_RGB;  // 압축 사용 안 함
-
-		// 6. 이미지를 화면에 출력
-		SetStretchBltMode(dc.GetSafeHdc(), COLORONCOLOR);
-		StretchDIBits(dc.GetSafeHdc(),
-			0, 0, rect.Width(), rect.Height(),        // 출력 영역의 크기
-			0, 0, m_cvImage.cols, m_cvImage.rows,     // 축소된 이미지의 크기
-			m_cvImage.data, &bitmapInfo, DIB_RGB_COLORS, SRCCOPY);
-
-		
-		if (m_cvImage.empty()) 
-		{
-			AfxMessageBox(_T("Failed Load Image"));
+			AfxMessageBox(_T("이미지를 로드할 수 없습니다."));
 			return;
 		}
+
+		// 이미지를 Picture Control에 표시
+		DisplayImageInPictureControl(m_image);
+		//CString filePath = dlg.GetPathName();
+		//CT2CA pszConvertedAnsiString(filePath);
+		//std::string imagePath(pszConvertedAnsiString);
+
+		//m_cvImage.release(); // OpenCV 메모리 해제
+
+		//m_cvImage = cv::imread(imagePath, cv::IMREAD_UNCHANGED);
+
+
+		//// 1. 클라이언트 영역에 대한 DC 생성
+		//CClientDC dc(GetDlgItem(IDC_CAMERA_IMAGE));
+
+		//// 2. 카메라 이미지를 표시할 컨트롤의 크기 가져오기
+		//CRect rect;
+		//GetDlgItem(IDC_CAMERA_IMAGE)->GetClientRect(&rect);
+
+		//// 3. 이미지가 그레이스케일(1채널)인지 확인하고, 그레이스케일인 경우 3채널(BGR)로 변환
+		//if (m_cvImage.channels() == 1) 
+		//{
+		//	cv::cvtColor(m_cvImage, m_cvImage, cv::COLOR_GRAY2BGR);
+		//}
+
+		//// 5. BITMAPINFO 설정
+		//BITMAPINFO bitmapInfo;
+		//memset(&bitmapInfo, 0, sizeof(BITMAPINFO));
+		//bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+		//bitmapInfo.bmiHeader.biWidth = m_cvImage.cols;// scaledImg.cols;  // 축소된 이미지의 너비 설정
+		//bitmapInfo.bmiHeader.biHeight = -m_cvImage.rows;  // 높이를 음수로 설정해 상하 반전 방지
+		//bitmapInfo.bmiHeader.biPlanes = 1;
+		//bitmapInfo.bmiHeader.biBitCount = 24;  // BGR 24비트
+		//bitmapInfo.bmiHeader.biCompression = BI_RGB;  // 압축 사용 안 함
+
+		//// 6. 이미지를 화면에 출력
+		//SetStretchBltMode(dc.GetSafeHdc(), COLORONCOLOR);
+		//StretchDIBits(dc.GetSafeHdc(),
+		//	0, 0, rect.Width(), rect.Height(),        // 출력 영역의 크기
+		//	0, 0, m_cvImage.cols, m_cvImage.rows,     // 축소된 이미지의 크기
+		//	m_cvImage.data, &bitmapInfo, DIB_RGB_COLORS, SRCCOPY);
+
+		//
+		//if (m_cvImage.empty()) 
+		//{
+		//	AfxMessageBox(_T("Failed Load Image"));
+		//	return;
+		//}
 	}
+}
+
+
+void CEdgeSearchDlg::OnGetMinMaxInfo(MINMAXINFO* lpMMI)
+{
+	// TODO: Add your message handler code here and/or call default
+
+	// 최소 크기 설정
+	lpMMI->ptMinTrackSize.x = 800; // 최소 너비
+	lpMMI->ptMinTrackSize.y = 600; // 최소 높이
+
+	// 최대 크기 설정 (필요 시)
+	lpMMI->ptMaxTrackSize.x = 1920; // 최대 너비
+	lpMMI->ptMaxTrackSize.y = 1080; // 최대 높이
+
+	CDialogEx::OnGetMinMaxInfo(lpMMI);
+}
+
+void CEdgeSearchDlg::DisplayImageInPictureControl(cv::Mat& img)
+{
+	// OpenCV Mat 이미지를 BMP로 변환
+	Mat rgbImg;
+	cvtColor(img, rgbImg, COLOR_BGR2RGB); // OpenCV는 BGR, MFC는 RGB 사용
+
+	// Bitmap 정보 생성
+	BITMAPINFO bitmapInfo = { 0 };
+	bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+	bitmapInfo.bmiHeader.biWidth = rgbImg.cols;
+	bitmapInfo.bmiHeader.biHeight = -rgbImg.rows; // 상하 반전을 방지하기 위해 음수 사용
+	bitmapInfo.bmiHeader.biPlanes = 1;
+	bitmapInfo.bmiHeader.biBitCount = 24;
+	bitmapInfo.bmiHeader.biCompression = BI_RGB;
+
+	// Bitmap 생성
+	HDC hdc = ::GetDC(m_pictureControl.m_hWnd);
+	void* pBits = nullptr;
+	HBITMAP hBitmap = CreateDIBSection(hdc, &bitmapInfo, DIB_RGB_COLORS, &pBits, nullptr, 0);
+	::ReleaseDC(m_pictureControl.m_hWnd, hdc);
+
+	if (pBits)
+	{
+		memcpy(pBits, rgbImg.data, rgbImg.total() * rgbImg.elemSize());
+	}
+
+	// Picture Control에 Bitmap 설정
+	m_pictureControl.SetBitmap(hBitmap);
 }

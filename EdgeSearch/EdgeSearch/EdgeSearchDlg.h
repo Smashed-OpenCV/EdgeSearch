@@ -11,6 +11,7 @@ class CEdgeSearchDlg : public CDialogEx
 // 생성입니다.
 public:
 	CEdgeSearchDlg(CWnd* pParent = nullptr);	// 표준 생성자입니다.
+	virtual ~CEdgeSearchDlg();
 
 // 대화 상자 데이터입니다.
 #ifdef AFX_DESIGN_TIME
@@ -35,6 +36,10 @@ protected:
 	afx_msg void OnBnClickedBtnImgLoad();
 
 private:
-	cv::Mat m_cvImage;           // opencv 이미지 객체 (cv::mat)
 
+public:
+	CStatic m_pictureControl;  // Picture Control 멤버 변수
+	cv::Mat m_image;           // OpenCV 이미지 데이터를 저장할 변수
+	afx_msg void OnGetMinMaxInfo(MINMAXINFO* lpMMI);
+	void DisplayImageInPictureControl(cv::Mat& img);
 };

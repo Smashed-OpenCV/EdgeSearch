@@ -17,5 +17,4 @@
 
 using namespace cv;
 using namespace std;
-
 #endif //PCH_H
